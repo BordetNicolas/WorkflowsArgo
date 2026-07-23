@@ -18,7 +18,7 @@ spec:
         description: Clé S3 du XML source (ex. inbox/doc-001.xml)
       - name: packet_seed
         value: "42"
-        description: Graine pour le nombre de paquets par canal (démo déterministe)
+        description: Conservé pour compat (doc_count n'en dépend plus ; split 0-20 aléatoire)
       - name: simulate_missing_input
         value: "true"
         description: Conservé pour compat ; l'entrée XML est simulée (stub) à partir de la clé
@@ -279,10 +279,11 @@ spec:
               exit 42
             fi
           fi
-          A=$((SEED % 4))
-          P=$(( (SEED / 4) % 4 ))
-          E=$(( (SEED / 16) % 4 ))
-          echo "[sort-split] seed=${SEED} → archive=${A} print=${P} egate=${E} paquets"
+          # 0..20 paquets par canal (aléatoire) ; SEED reste dispo pour doc_count
+          A=$((RANDOM % 21))
+          P=$((RANDOM % 21))
+          E=$((RANDOM % 21))
+          echo "[sort-split] seed=${SEED} → archive=${A} print=${P} egate=${E} paquets (aléatoire 0-20)"
 
           mkdir -p /work/packets/archive /work/packets/print /work/packets/egate
 
@@ -295,7 +296,7 @@ spec:
             i=1
             while [ "${i}" -le "${COUNT}" ]; do
               PID="$(echo "${CHANNEL}" | cut -c1 | tr 'a-z' 'A-Z')-$(printf '%03d' "${i}")"
-              DOC_COUNT=$(( (SEED + i) % 5 + 1 ))
+              DOC_COUNT=$((RANDOM % 5 + 1))
               S3_KEY="packets/${CHANNEL}/${PID}.ps"
               {
                 echo "%!PS-Adobe-3.0"
@@ -310,7 +311,7 @@ spec:
               i=$((i + 1))
             done
             echo ']' >> "${OUT}"
-            echo "[sort-split] ${CHANNEL}: $(cat "${OUT}")"
+            echo "[sort-split] ${CHANNEL}: count=${COUNT}"
           }
 
           build_list archive "${A}" /work/archive_packets.json
