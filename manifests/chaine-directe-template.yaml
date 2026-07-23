@@ -14,6 +14,7 @@ spec:
   arguments:
     parameters:
       - name: input_xml_key
+        value: inbox/exemple.xml
         description: Clé S3 du XML source (ex. inbox/doc-001.xml)
       - name: packet_seed
         value: "42"

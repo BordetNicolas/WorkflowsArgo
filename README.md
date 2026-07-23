@@ -63,7 +63,7 @@ entre étapes transitent bien via MinIO (artifacts Argo).
 
 | Paramètre | Défaut | Rôle |
 |-----------|--------|------|
-| `input_xml_key` | *(requis)* | Clé logique S3 du XML source |
+| `input_xml_key` | `inbox/exemple.xml` | Clé logique S3 du XML source |
 | `packet_seed` | `42` | Graine déterministe du nombre de paquets par canal (0..3) |
 | `simulate_missing_input` | `true` | Conservé pour compat ; entrée toujours stubbée pour l’instant |
 
