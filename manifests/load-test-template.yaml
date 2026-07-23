@@ -134,8 +134,9 @@ spec:
           emptyDir:
             sizeLimit: 2Gi
       script:
-        image: alexeiled/stress-ng:latest
-        command: [bash]
+        # alexeiled/stress-ng = binaire seul (pas de shell) → alpine + apk
+        image: alpine:3.20
+        command: [sh]
         volumeMounts:
           - name: scratch
             mountPath: /tmp
@@ -149,8 +150,11 @@ spec:
             memory: 2Gi
             ephemeral-storage: 2Gi
         source: |
-          set -euo pipefail
+          set -eu
           mkdir -p /work
+          echo "[stress] installation stress-ng..."
+          apk add --no-cache stress-ng >/work/apk.log 2>&1
+
           WID="{{inputs.parameters.worker_id}}"
           DUR="{{workflow.parameters.duration_seconds}}"
           CPU_N="{{workflow.parameters.cpu_workers}}"
@@ -161,7 +165,7 @@ spec:
           START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           START_EPOCH="$(date +%s)"
           echo "[stress] worker=${WID} start=${START} duration=${DUR}s"
-          echo "[stress] cpu=${CPU_N} vm=${VM_N}×${VM_BYTES} hdd=${HDD_N}×${HDD_BYTES} + io"
+          echo "[stress] cpu=${CPU_N} vm=${VM_N}x${VM_BYTES} hdd=${HDD_N}x${HDD_BYTES} + io"
 
           set +e
           stress-ng \
@@ -171,15 +175,15 @@ spec:
             --vm-bytes "${VM_BYTES}" \
             --vm-keep \
             --vm-populate \
-            --io 4 \
+            --iomix 4 \
             --hdd "${HDD_N}" \
             --hdd-bytes "${HDD_BYTES}" \
             --hdd-opts sync \
             --timeout "${DUR}s" \
             --metrics-brief \
             --timestamp \
-            2>&1 | tee /work/stress-ng.log
-          RC=${PIPESTATUS[0]}
+            > /work/stress-ng.log 2>&1
+          RC=$?
           set -e
 
           END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
