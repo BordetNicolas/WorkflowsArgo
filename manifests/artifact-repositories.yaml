@@ -1,0 +1,21 @@
+# Artifact repository MinIO/S3 for Workflows in this namespace.
+# Remplacer REPLACE_* puis créer le Secret credentials (voir README).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifact-repositories
+  namespace: workflows-argo
+  annotations:
+    workflows.argoproj.io/default-artifact-repository: default-v1
+data:
+  default-v1: |
+    s3:
+      bucket: argo-workflows
+      endpoint: https://minios3.alexetnico.com
+      insecure: true
+      accessKeySecret:
+        name: minio-artifacts
+        key: accessKey
+      secretKeySecret:
+        name: minio-artifacts
+        key: secretKey
