@@ -11,6 +11,7 @@ manifests/
   artifact-repositories.yaml       # ConfigMap MinIO/S3 (placeholders)
   hello-template.yaml              # exemple WorkflowTemplate
   chaine-directe-template.yaml     # chaîne documentaire (DAG + fan-out)
+  load-test-template.yaml          # stress test cluster Argo (fan-out)
 ```
 
 ## Déploiement
@@ -76,3 +77,19 @@ Chaque step peut échouer aléatoirement (`exit 42`) puis être retenté jusqu�
 | `fail_rate_percent` | `30` | Probabilité d’échec par tentative (0–100) |
 
 Ou via l’UI Argo Workflows.
+
+### load-test
+
+Stress test basique du cluster Argo : fan-out de N pods en parallèle
+(~10s de charge CPU chacun), puis rapport JSON vers MinIO.
+
+```bash
+argo submit --from workflowtemplate/load-test -n workflows-argo \
+  -p workers=20
+```
+
+| Paramètre | Défaut | Rôle |
+|-----------|--------|------|
+| `workers` | `10` | Nombre de pods parallèles (1–200) |
+
+Artifacts MinIO : `plan` (préparation), `worker_result` (par pod), `report` (synthèse).
