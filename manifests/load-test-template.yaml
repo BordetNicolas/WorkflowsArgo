@@ -8,6 +8,15 @@ metadata:
 spec:
   serviceAccountName: argo-workflow
   entrypoint: main
+  # Logs stdout/stderr → MinIO (consultables après GC des pods)
+  archiveLogs: true
+  # Pods Succeeded supprimés tout de suite ; pods Failed gardés jusqu'au TTL workflow
+  podGC:
+    strategy: OnPodSuccess
+  # Workflow CR (+ pods Failed restants) : 1j si succès, 3j si échec
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 259200
   artifactRepositoryRef:
     configMap: artifact-repositories
     key: default-v1

@@ -6,6 +6,15 @@ metadata:
 spec:
   serviceAccountName: argo-workflow
   entrypoint: main
+  archiveLogs: true
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 259200
+  artifactRepositoryRef:
+    configMap: artifact-repositories
+    key: default-v1
   templates:
     - name: main
       container:

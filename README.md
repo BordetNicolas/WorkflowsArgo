@@ -39,6 +39,20 @@ kubectl -n workflows-argo create secret generic minio-artifacts \
 
 Ne jamais committer de clés MinIO dans ce dépôt.
 
+## Rétention pods & logs
+
+Tous les `WorkflowTemplate` ont :
+
+| Réglage | Valeur | Effet |
+|---------|--------|--------|
+| `archiveLogs` | `true` | stdout/stderr archivés dans MinIO (lisible dans l’UI après GC) |
+| `podGC.strategy` | `OnPodSuccess` | pods **Succeeded** supprimés dès la fin du step |
+| `ttlStrategy.secondsAfterSuccess` | `86400` (1 j) | suppression du Workflow réussi |
+| `ttlStrategy.secondsAfterFailure` | `259200` (3 j) | pods **Failed** + Workflow échoué gardés ~3 jours puis GC |
+
+Les runs déjà terminés avant ce changement ne sont pas nettoyés automatiquement :
+`argo delete --completed -n workflows-argo`.
+
 ## Lancer un run
 
 ### hello
