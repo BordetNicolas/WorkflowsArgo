@@ -80,8 +80,9 @@ Ou via l’UI Argo Workflows.
 
 ### load-test
 
-Stress test basique du cluster Argo : fan-out de N pods en parallèle
-(~10s de charge CPU chacun), puis rapport JSON vers MinIO.
+Stress test basique du cluster Argo : fan-out de N pods en parallèle.
+Chaque pod enchaîne CPU (~10s), RAM (~64 MiB / 5s) et I/O disque
+(32 MiB × 2 passes), puis rapport JSON vers MinIO.
 
 ```bash
 argo submit --from workflowtemplate/load-test -n workflows-argo \
