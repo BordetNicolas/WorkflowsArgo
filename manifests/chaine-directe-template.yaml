@@ -27,7 +27,7 @@ spec:
         tasks:
           # Entrée réelle MinIO (échoue si la clé n'existe pas)
           - name: validate-s3
-            template: validate_xml_s3
+            template: validate-xml-s3
             when: "'{{workflow.parameters.simulate_missing_input}}' == 'false'"
             arguments:
               parameters:
@@ -35,14 +35,14 @@ spec:
                   value: "{{workflow.parameters.input_xml_key}}"
           # Entrée stub (démo sans objet dans le bucket)
           - name: validate-sim
-            template: validate_xml_sim
+            template: validate-xml-sim
             when: "'{{workflow.parameters.simulate_missing_input}}' == 'true'"
             arguments:
               parameters:
                 - name: input_xml_key
                   value: "{{workflow.parameters.input_xml_key}}"
           - name: xml-to-ps
-            template: xml_to_ps
+            template: xml-to-ps
             depends: "validate-s3.Succeeded || validate-sim.Succeeded"
             arguments:
               artifacts:
@@ -52,14 +52,14 @@ spec:
                     tasks['validate-sim'].outputs.artifacts['validated_xml'] :
                     tasks['validate-s3'].outputs.artifacts['validated_xml']
           - name: modify-ps
-            template: modify_ps
+            template: modify-ps
             depends: xml-to-ps
             arguments:
               artifacts:
                 - name: document_ps
                   from: "{{tasks.xml-to-ps.outputs.artifacts.document_ps}}"
           - name: sort-split
-            template: sort_split
+            template: sort-split
             depends: modify-ps
             arguments:
               parameters:
@@ -69,7 +69,7 @@ spec:
                 - name: document_ps
                   from: "{{tasks.modify-ps.outputs.artifacts.document_ps}}"
           - name: archive-packet
-            template: archive_packet
+            template: archive-packet
             depends: sort-split
             arguments:
               parameters:
@@ -77,7 +77,7 @@ spec:
                   value: "{{item}}"
             withParam: "{{tasks.sort-split.outputs.parameters.archive_packets}}"
           - name: print-packet
-            template: print_packet
+            template: print-packet
             depends: sort-split
             arguments:
               parameters:
@@ -85,7 +85,7 @@ spec:
                   value: "{{item}}"
             withParam: "{{tasks.sort-split.outputs.parameters.print_packets}}"
           - name: egate-packet
-            template: egate_packet
+            template: egate-packet
             depends: sort-split
             arguments:
               parameters:
@@ -94,7 +94,7 @@ spec:
             withParam: "{{tasks.sort-split.outputs.parameters.egate_packets}}"
 
     # 1a — Validation XML depuis MinIO (input S3)
-    - name: validate_xml_s3
+    - name: validate-xml-s3
       inputs:
         parameters:
           - name: input_xml_key
@@ -123,7 +123,7 @@ spec:
           echo "[validate_xml_s3] validation OK"
 
     # 1b — Validation XML simulée (stub, sans download S3)
-    - name: validate_xml_sim
+    - name: validate-xml-sim
       inputs:
         parameters:
           - name: input_xml_key
@@ -150,7 +150,7 @@ spec:
           echo "[validate_xml_sim] XML stub généré + validation OK"
 
     # 2 — XML → PostScript (document composé, mock)
-    - name: xml_to_ps
+    - name: xml-to-ps
       inputs:
         artifacts:
           - name: validated_xml
@@ -179,7 +179,7 @@ spec:
           echo "[xml_to_ps] écrit /work/document.ps (${DOC_COUNT} documents)"
 
     # 3 — Modification du PostScript (mock)
-    - name: modify_ps
+    - name: modify-ps
       inputs:
         artifacts:
           - name: document_ps
@@ -203,7 +203,7 @@ spec:
           echo "[modify_ps] document_mod.ps prêt"
 
     # 4 — Tri / éclatement → listes JSON pour fan-out (0..N paquets / canal)
-    - name: sort_split
+    - name: sort-split
       inputs:
         parameters:
           - name: packet_seed
@@ -271,7 +271,7 @@ spec:
           build_list egate "${E}" /work/egate_packets.json
 
     # Canal archivage — PS → PDF + XML (mock)
-    - name: archive_packet
+    - name: archive-packet
       inputs:
         parameters:
           - name: packet
@@ -299,7 +299,7 @@ spec:
           echo "[archive] produits ${PID}.pdf + ${PID}.xml"
 
     # Canal impression — enrichissement PS + envoi printer (mock)
-    - name: print_packet
+    - name: print-packet
       inputs:
         parameters:
           - name: packet
@@ -329,7 +329,7 @@ spec:
           echo "SENT ${PID} to printer://physical/default" > "/work/out/${PID}.receipt.txt"
 
     # Canal guichet électronique — PS → XML + PDF embed (mock)
-    - name: egate_packet
+    - name: egate-packet
       inputs:
         parameters:
           - name: packet
