@@ -14,8 +14,26 @@ spec:
   arguments:
     parameters:
       - name: workers
-        value: "10"
-        description: Nombre de pods parallèles pour stresser le cluster Argo (charge)
+        value: "25"
+        description: Nombre de pods parallèles (1–500). Chaque pod réserve ~1 CPU / 1 GiB.
+      - name: duration_seconds
+        value: "120"
+        description: Durée du stress CPU+RAM+I/O par pod (secondes)
+      - name: cpu_workers
+        value: "4"
+        description: Stressors CPU stress-ng par pod
+      - name: vm_workers
+        value: "2"
+        description: Stressors mémoire (vm) par pod
+      - name: vm_bytes
+        value: "512M"
+        description: RAM allouée par stressor vm (ex. 512M, 1G)
+      - name: hdd_workers
+        value: "2"
+        description: Stressors disque (hdd) par pod
+      - name: hdd_bytes
+        value: "512M"
+        description: Volume écrit/lu par stressor hdd
   templates:
     - name: main
       dag:
@@ -38,7 +56,6 @@ spec:
                 - name: worker_ids
                   value: "{{tasks.prepare.outputs.parameters.worker_ids}}"
 
-    # Génère la liste des workers [0..N-1] selon le paramètre workers.
     - name: prepare
       outputs:
         parameters:
@@ -55,12 +72,21 @@ spec:
           set -eu
           mkdir -p /work
           N="{{workflow.parameters.workers}}"
+          DUR="{{workflow.parameters.duration_seconds}}"
           if ! echo "${N}" | grep -Eq '^[1-9][0-9]*$'; then
             echo "[prepare] ÉCHEC: workers doit être un entier >= 1 (reçu: ${N})" >&2
             exit 1
           fi
-          if [ "${N}" -gt 200 ]; then
-            echo "[prepare] ÉCHEC: workers trop élevé (${N}), max 200" >&2
+          if [ "${N}" -gt 500 ]; then
+            echo "[prepare] ÉCHEC: workers trop élevé (${N}), max 500" >&2
+            exit 1
+          fi
+          if ! echo "${DUR}" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "[prepare] ÉCHEC: duration_seconds invalide (${DUR})" >&2
+            exit 1
+          fi
+          if [ "${DUR}" -gt 3600 ]; then
+            echo "[prepare] ÉCHEC: duration_seconds trop élevé (${DUR}), max 3600" >&2
             exit 1
           fi
 
@@ -81,13 +107,20 @@ spec:
             "workflow": "{{workflow.name}}",
             "namespace": "{{workflow.namespace}}",
             "workers": ${N},
+            "duration_seconds": ${DUR},
+            "cpu_workers": "{{workflow.parameters.cpu_workers}}",
+            "vm_workers": "{{workflow.parameters.vm_workers}}",
+            "vm_bytes": "{{workflow.parameters.vm_bytes}}",
+            "hdd_workers": "{{workflow.parameters.hdd_workers}}",
+            "hdd_bytes": "{{workflow.parameters.hdd_bytes}}",
             "worker_ids": ${IDS},
-            "prepared_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            "prepared_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "tool": "stress-ng"
           }
           EOF
-          echo "[prepare] plan: ${N} workers → ${IDS}"
+          echo "[prepare] plan: ${N} workers × ${DUR}s (stress-ng cpu/vm/hdd)"
 
-    # Un pod de charge : phases CPU, RAM (/dev/shm) et I/O disque.
+    # Charge réelle via stress-ng + requests CPU/RAM pour saturer le scheduler.
     - name: stress-worker
       inputs:
         parameters:
@@ -96,71 +129,69 @@ spec:
         artifacts:
           - name: worker_result
             path: /work/result.json
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 2Gi
       script:
-        image: alpine:3.20
-        command: [sh]
+        image: alexeiled/stress-ng:latest
+        command: [bash]
+        volumeMounts:
+          - name: scratch
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "4"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
         source: |
-          set -eu
+          set -euo pipefail
           mkdir -p /work
           WID="{{inputs.parameters.worker_id}}"
+          DUR="{{workflow.parameters.duration_seconds}}"
+          CPU_N="{{workflow.parameters.cpu_workers}}"
+          VM_N="{{workflow.parameters.vm_workers}}"
+          VM_BYTES="{{workflow.parameters.vm_bytes}}"
+          HDD_N="{{workflow.parameters.hdd_workers}}"
+          HDD_BYTES="{{workflow.parameters.hdd_bytes}}"
           START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           START_EPOCH="$(date +%s)"
-          echo "[stress] worker=${WID} start=${START}"
+          echo "[stress] worker=${WID} start=${START} duration=${DUR}s"
+          echo "[stress] cpu=${CPU_N} vm=${VM_N}×${VM_BYTES} hdd=${HDD_N}×${HDD_BYTES} + io"
 
-          # --- CPU ~10s (busy loops en parallèle) ---
-          CPU_START="$(date +%s)"
-          cpu_worker() {
-            end=$(( $(date +%s) + 10 ))
-            n=0
-            while [ "$(date +%s)" -lt "${end}" ]; do
-              n=$((n + 1))
-            done
-            echo "${n}" > "/work/cpu_loops_$1"
-          }
-          cpu_worker 0 &
-          cpu_worker 1 &
-          wait
-          CPU_LOOPS=$(( $(cat /work/cpu_loops_0) + $(cat /work/cpu_loops_1) ))
-          CPU_ELAPSED=$(( $(date +%s) - CPU_START ))
-          rm -f /work/cpu_loops_0 /work/cpu_loops_1
-          echo "[stress] worker=${WID} CPU ok elapsed=${CPU_ELAPSED}s loops=${CPU_LOOPS}"
-
-          # --- RAM ~64 MiB dans tmpfs /dev/shm, retenus ~5s ---
-          RAM_START="$(date +%s)"
-          RAM_MB=64
-          RAM_PATH="/dev/shm/load-test-${WID}.bin"
-          if [ ! -d /dev/shm ]; then
-            echo "[stress] worker=${WID} /dev/shm absent, fallback /tmp" >&2
-            RAM_PATH="/tmp/load-test-ram-${WID}.bin"
-          fi
-          dd if=/dev/zero of="${RAM_PATH}" bs=1M count="${RAM_MB}" status=none
-          # Toucher la mémoire pour forcer l'allocation réelle
-          od -An -N16 -tx1 "${RAM_PATH}" >/dev/null
-          sleep 5
-          RAM_BYTES="$(wc -c < "${RAM_PATH}" | tr -d ' ')"
-          rm -f "${RAM_PATH}"
-          RAM_ELAPSED=$(( $(date +%s) - RAM_START ))
-          echo "[stress] worker=${WID} RAM ok elapsed=${RAM_ELAPSED}s bytes=${RAM_BYTES}"
-
-          # --- I/O disque : écriture, sync, relecture (32 MiB × 2 passes) ---
-          IO_START="$(date +%s)"
-          IO_MB=32
-          IO_PASSES=2
-          IO_FILE="/work/io-blob.bin"
-          p=0
-          while [ "${p}" -lt "${IO_PASSES}" ]; do
-            dd if=/dev/zero of="${IO_FILE}" bs=1M count="${IO_MB}" status=none
-            sync
-            dd if="${IO_FILE}" of=/dev/null bs=1M status=none
-            p=$((p + 1))
-          done
-          IO_BYTES=$((IO_MB * 1024 * 1024 * IO_PASSES))
-          rm -f "${IO_FILE}"
-          IO_ELAPSED=$(( $(date +%s) - IO_START ))
-          echo "[stress] worker=${WID} IO ok elapsed=${IO_ELAPSED}s bytes_rw~=${IO_BYTES}"
+          set +e
+          stress-ng \
+            --cpu "${CPU_N}" \
+            --cpu-method all \
+            --vm "${VM_N}" \
+            --vm-bytes "${VM_BYTES}" \
+            --vm-keep \
+            --vm-populate \
+            --io 4 \
+            --hdd "${HDD_N}" \
+            --hdd-bytes "${HDD_BYTES}" \
+            --hdd-opts sync \
+            --timeout "${DUR}s" \
+            --metrics-brief \
+            --timestamp \
+            2>&1 | tee /work/stress-ng.log
+          RC=${PIPESTATUS[0]}
+          set -e
 
           END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           ELAPSED=$(( $(date +%s) - START_EPOCH ))
+          STATUS="ok"
+          if [ "${RC}" -ne 0 ]; then
+            STATUS="stress-ng-exit-${RC}"
+          fi
+
+          echo "[stress] worker=${WID} stress-ng log (tail):"
+          tail -n 30 /work/stress-ng.log || true
+
           cat > /work/result.json <<EOF
           {
             "worker_id": ${WID},
@@ -168,28 +199,20 @@ spec:
             "started_at": "${START}",
             "finished_at": "${END}",
             "elapsed_seconds": ${ELAPSED},
-            "cpu": {
-              "elapsed_seconds": ${CPU_ELAPSED},
-              "parallel_loops": 2,
-              "loops": ${CPU_LOOPS}
-            },
-            "ram": {
-              "elapsed_seconds": ${RAM_ELAPSED},
-              "target_mib": ${RAM_MB},
-              "bytes_allocated": ${RAM_BYTES}
-            },
-            "io": {
-              "elapsed_seconds": ${IO_ELAPSED},
-              "block_mib": ${IO_MB},
-              "passes": ${IO_PASSES},
-              "bytes_rw_approx": ${IO_BYTES}
-            },
-            "status": "ok"
+            "duration_requested_seconds": ${DUR},
+            "stress_ng_exit_code": ${RC},
+            "cpu_workers": ${CPU_N},
+            "vm_workers": ${VM_N},
+            "vm_bytes": "${VM_BYTES}",
+            "hdd_workers": ${HDD_N},
+            "hdd_bytes": "${HDD_BYTES}",
+            "io_workers": 4,
+            "status": "${STATUS}"
           }
           EOF
-          echo "[stress] worker=${WID} done elapsed=${ELAPSED}s (cpu+ram+io)"
+          echo "[stress] worker=${WID} done elapsed=${ELAPSED}s status=${STATUS}"
+          exit 0
 
-    # Rapport agrégé vers MinIO.
     - name: report
       inputs:
         parameters:
@@ -205,6 +228,7 @@ spec:
           set -eu
           mkdir -p /work
           N="{{workflow.parameters.workers}}"
+          DUR="{{workflow.parameters.duration_seconds}}"
           IDS='{{inputs.parameters.worker_ids}}'
           FINISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat > /work/report.json <<EOF
@@ -213,12 +237,15 @@ spec:
             "namespace": "{{workflow.namespace}}",
             "uid": "{{workflow.uid}}",
             "workers": ${N},
+            "duration_seconds": ${DUR},
             "worker_ids": ${IDS},
             "finished_at": "${FINISHED}",
             "status": "completed",
-            "phases": ["cpu", "ram", "io"],
-            "note": "Stress test Argo: ${N} pods parallèles (CPU ~10s, RAM ~64MiB/5s, IO 32MiB×2). Détails par worker dans les artifacts stress-worker."
+            "tool": "stress-ng",
+            "phases": ["cpu", "vm", "io", "hdd"],
+            "per_pod_requests": {"cpu": "1", "memory": "1Gi"},
+            "note": "Stress agressif: ${N} pods × ${DUR}s (stress-ng cpu/vm/io/hdd + requests K8s). Détails dans artifacts worker_result."
           }
           EOF
-          echo "[report] écrit /work/report.json (${N} workers, phases cpu/ram/io)"
+          echo "[report] écrit /work/report.json (${N} workers × ${DUR}s)"
           cat /work/report.json

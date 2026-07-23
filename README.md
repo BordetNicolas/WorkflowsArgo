@@ -80,17 +80,33 @@ Ou via l’UI Argo Workflows.
 
 ### load-test
 
-Stress test basique du cluster Argo : fan-out de N pods en parallèle.
-Chaque pod enchaîne CPU (~10s), RAM (~64 MiB / 5s) et I/O disque
-(32 MiB × 2 passes), puis rapport JSON vers MinIO.
+Stress agressif du cluster Argo / nœuds : fan-out de N pods en parallèle.
+Chaque pod lance **stress-ng** (CPU + RAM + I/O + disque) pendant
+`duration_seconds`, avec requests Kubernetes `1 CPU` / `1 GiB` pour saturer
+le scheduler.
 
 ```bash
+# Défaut déjà costaud (~25 pods × 120s)
+argo submit --from workflowtemplate/load-test -n workflows-argo
+
+# Monter encore la charge
 argo submit --from workflowtemplate/load-test -n workflows-argo \
-  -p workers=20
+  -p workers=40 \
+  -p duration_seconds=180 \
+  -p vm_bytes=1G \
+  -p hdd_bytes=1G
 ```
 
 | Paramètre | Défaut | Rôle |
 |-----------|--------|------|
-| `workers` | `10` | Nombre de pods parallèles (1–200) |
+| `workers` | `25` | Pods parallèles (1–500) |
+| `duration_seconds` | `120` | Durée stress-ng par pod |
+| `cpu_workers` | `4` | Stressors CPU / pod |
+| `vm_workers` | `2` | Stressors RAM / pod |
+| `vm_bytes` | `512M` | RAM par stressor vm |
+| `hdd_workers` | `2` | Stressors disque / pod |
+| `hdd_bytes` | `512M` | Volume I/O disque par stressor |
 
-Artifacts MinIO : `plan` (préparation), `worker_result` (par pod), `report` (synthèse).
+Artifacts MinIO : `plan`, `worker_result` (par pod), `report`.
+
+Attention : avec les défauts, ~25 CPU / 25 GiB sont demandés au cluster.
