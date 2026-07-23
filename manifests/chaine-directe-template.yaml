@@ -19,38 +19,27 @@ spec:
         value: "42"
         description: Graine pour le nombre de paquets par canal (démo déterministe)
       - name: simulate_missing_input
-        value: "false"
-        description: Si true, génère un XML stub sans télécharger depuis MinIO
+        value: "true"
+        description: Conservé pour compat ; l'entrée XML est simulée (stub) à partir de la clé
   templates:
     - name: main
       dag:
         tasks:
-          # Entrée réelle MinIO (échoue si la clé n'existe pas)
-          - name: validate-s3
-            template: validate-xml-s3
-            when: "'{{workflow.parameters.simulate_missing_input}}' == 'false'"
+          - name: validate-xml
+            template: validate-xml
             arguments:
               parameters:
                 - name: input_xml_key
                   value: "{{workflow.parameters.input_xml_key}}"
-          # Entrée stub (démo sans objet dans le bucket)
-          - name: validate-sim
-            template: validate-xml-sim
-            when: "'{{workflow.parameters.simulate_missing_input}}' == 'true'"
-            arguments:
-              parameters:
-                - name: input_xml_key
-                  value: "{{workflow.parameters.input_xml_key}}"
+                - name: simulate_missing_input
+                  value: "{{workflow.parameters.simulate_missing_input}}"
           - name: xml-to-ps
             template: xml-to-ps
-            depends: "validate-s3.Succeeded || validate-sim.Succeeded"
+            depends: validate-xml
             arguments:
               artifacts:
                 - name: validated_xml
-                  fromExpression: >-
-                    tasks['validate-sim'].status == 'Succeeded' ?
-                    tasks['validate-sim'].outputs.artifacts['validated_xml'] :
-                    tasks['validate-s3'].outputs.artifacts['validated_xml']
+                  from: "{{tasks.validate-xml.outputs.artifacts.validated_xml}}"
           - name: modify-ps
             template: modify-ps
             depends: xml-to-ps
@@ -93,16 +82,12 @@ spec:
                   value: "{{item}}"
             withParam: "{{tasks.sort-split.outputs.parameters.egate_packets}}"
 
-    # 1a — Validation XML depuis MinIO (input S3)
-    - name: validate-xml-s3
+    # 1 — Validation XML (mock). Entrée = paramètre clé ; artifacts inter-étapes via MinIO.
+    - name: validate-xml
       inputs:
         parameters:
           - name: input_xml_key
-        artifacts:
-          - name: input_xml
-            path: /work/input.xml
-            s3:
-              key: "{{inputs.parameters.input_xml_key}}"
+          - name: simulate_missing_input
       outputs:
         artifacts:
           - name: validated_xml
@@ -114,31 +99,14 @@ spec:
           set -eu
           mkdir -p /work
           KEY="{{inputs.parameters.input_xml_key}}"
-          echo "[validate_xml_s3] fichier reçu depuis MinIO key=${KEY}"
-          if ! grep -q '<.' /work/input.xml 2>/dev/null; then
-            echo "[validate_xml_s3] ÉCHEC: contenu non XML" >&2
+          SIM="{{inputs.parameters.simulate_missing_input}}"
+          echo "[validate-xml] clé logique S3=${KEY} simulate_missing_input=${SIM}"
+
+          if [ -z "${KEY}" ]; then
+            echo "[validate-xml] ÉCHEC: input_xml_key vide" >&2
             exit 1
           fi
-          cp /work/input.xml /work/validated.xml
-          echo "[validate_xml_s3] validation OK"
 
-    # 1b — Validation XML simulée (stub, sans download S3)
-    - name: validate-xml-sim
-      inputs:
-        parameters:
-          - name: input_xml_key
-      outputs:
-        artifacts:
-          - name: validated_xml
-            path: /work/validated.xml
-      script:
-        image: alpine:3.20
-        command: [sh]
-        source: |
-          set -eu
-          mkdir -p /work
-          KEY="{{inputs.parameters.input_xml_key}}"
-          echo "[validate_xml_sim] simulation input pour key=${KEY}"
           cat > /work/validated.xml <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <documents source_key="${KEY}">
@@ -147,7 +115,12 @@ spec:
             <document id="3"><title>Stub document 3</title></document>
           </documents>
           EOF
-          echo "[validate_xml_sim] XML stub généré + validation OK"
+
+          if ! grep -q '<documents' /work/validated.xml; then
+            echo "[validate-xml] ÉCHEC: contenu non XML" >&2
+            exit 1
+          fi
+          echo "[validate-xml] validation OK (XML stub pour ${KEY})"
 
     # 2 — XML → PostScript (document composé, mock)
     - name: xml-to-ps
@@ -164,7 +137,7 @@ spec:
         command: [sh]
         source: |
           set -eu
-          echo "[xml_to_ps] transformation XML → PostScript (simulation)"
+          echo "[xml-to-ps] transformation XML → PostScript (simulation)"
           DOC_COUNT=$(grep -c '<document ' /work/validated.xml || true)
           cat > /work/document.ps <<EOF
           %!PS-Adobe-3.0
@@ -176,7 +149,7 @@ spec:
           (Chaine directe - document compose - ${DOC_COUNT} docs) show
           showpage
           EOF
-          echo "[xml_to_ps] écrit /work/document.ps (${DOC_COUNT} documents)"
+          echo "[xml-to-ps] écrit /work/document.ps (${DOC_COUNT} documents)"
 
     # 3 — Modification du PostScript (mock)
     - name: modify-ps
@@ -193,14 +166,14 @@ spec:
         command: [sh]
         source: |
           set -eu
-          echo "[modify_ps] enrichment / modification PS (simulation)"
+          echo "[modify-ps] enrichment / modification PS (simulation)"
           cp /work/document.ps /work/document_mod.ps
           cat >> /work/document_mod.ps <<'EOF'
           % --- modified ---
           % barcode overlay simulated
           % address block simulated
           EOF
-          echo "[modify_ps] document_mod.ps prêt"
+          echo "[modify-ps] document_mod.ps prêt"
 
     # 4 — Tri / éclatement → listes JSON pour fan-out (0..N paquets / canal)
     - name: sort-split
@@ -230,11 +203,10 @@ spec:
         source: |
           set -eu
           SEED="{{inputs.parameters.packet_seed}}"
-          # Dérive 0..3 paquets par canal à partir de la graine (déterministe)
           A=$((SEED % 4))
           P=$(( (SEED / 4) % 4 ))
           E=$(( (SEED / 16) % 4 ))
-          echo "[sort_split] seed=${SEED} → archive=${A} print=${P} egate=${E} paquets"
+          echo "[sort-split] seed=${SEED} → archive=${A} print=${P} egate=${E} paquets"
 
           mkdir -p /work/packets/archive /work/packets/print /work/packets/egate
 
@@ -249,7 +221,6 @@ spec:
               PID="$(echo "${CHANNEL}" | cut -c1 | tr 'a-z' 'A-Z')-$(printf '%03d' "${i}")"
               DOC_COUNT=$(( (SEED + i) % 5 + 1 ))
               S3_KEY="packets/${CHANNEL}/${PID}.ps"
-              # Paquet PS stub (extrait du document composé)
               {
                 echo "%!PS-Adobe-3.0"
                 echo "% packet ${PID} channel=${CHANNEL} docs=${DOC_COUNT}"
@@ -263,7 +234,7 @@ spec:
               i=$((i + 1))
             done
             echo ']' >> "${OUT}"
-            echo "[sort_split] ${CHANNEL}: $(cat "${OUT}")"
+            echo "[sort-split] ${CHANNEL}: $(cat "${OUT}")"
           }
 
           build_list archive "${A}" /work/archive_packets.json
@@ -286,7 +257,6 @@ spec:
           set -eu
           PACKET='{{inputs.parameters.packet}}'
           echo "[archive] paquet=${PACKET}"
-          # Extraction basique sans jq
           PID=$(echo "${PACKET}" | sed -n 's/.*"packet_id":"\([^"]*\)".*/\1/p')
           DOCS=$(echo "${PACKET}" | sed -n 's/.*"doc_count":\([0-9]*\).*/\1/p')
           KEY=$(echo "${PACKET}" | sed -n 's/.*"s3_key":"\([^"]*\)".*/\1/p')
@@ -348,7 +318,6 @@ spec:
           DOCS=$(echo "${PACKET}" | sed -n 's/.*"doc_count":\([0-9]*\).*/\1/p')
           KEY=$(echo "${PACKET}" | sed -n 's/.*"s3_key":"\([^"]*\)".*/\1/p')
           mkdir -p /work/out
-          # PDF embed simulé en base64 stub dans le XML
           cat > "/work/out/${PID}.egate.xml" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <egate_submission packet_id="${PID}" doc_count="${DOCS}" source_key="${KEY}">
