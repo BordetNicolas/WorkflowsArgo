@@ -55,16 +55,24 @@ avec **0..N paquets** (`withParam`).
 ```bash
 argo submit --from workflowtemplate/chaine-directe -n workflows-argo \
   -p input_xml_key=inbox/exemple.xml \
-  -p packet_seed=42
+  -p packet_seed=42 \
+  -p enable_random_failures=true \
+  -p fail_rate_percent=30
 ```
 
 L’entrée XML est simulée à partir de `input_xml_key` (stub). Les fichiers
 entre étapes transitent bien via MinIO (artifacts Argo).
+
+Chaque step peut échouer aléatoirement (`exit 42`) puis être retenté jusqu’à
+3 fois (`retryStrategy`, backoff 2s ×2). Désactiver le chaos :
+`-p enable_random_failures=false`.
 
 | Paramètre | Défaut | Rôle |
 |-----------|--------|------|
 | `input_xml_key` | `inbox/exemple.xml` | Clé logique S3 du XML source |
 | `packet_seed` | `42` | Graine déterministe du nombre de paquets par canal (0..3) |
 | `simulate_missing_input` | `true` | Conservé pour compat ; entrée toujours stubbée pour l’instant |
+| `enable_random_failures` | `true` | Active les échecs aléatoires pour tester les retries |
+| `fail_rate_percent` | `30` | Probabilité d’échec par tentative (0–100) |
 
 Ou via l’UI Argo Workflows.

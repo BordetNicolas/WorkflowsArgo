@@ -22,6 +22,12 @@ spec:
       - name: simulate_missing_input
         value: "true"
         description: Conservé pour compat ; l'entrée XML est simulée (stub) à partir de la clé
+      - name: enable_random_failures
+        value: "true"
+        description: Si true, chaque step peut échouer aléatoirement (pour tester les retries)
+      - name: fail_rate_percent
+        value: "30"
+        description: Probabilité d'échec simulé par tentative (0-100)
   templates:
     - name: main
       dag:
@@ -85,6 +91,13 @@ spec:
 
     # 1 — Validation XML (mock). Entrée = paramètre clé ; artifacts inter-étapes via MinIO.
     - name: validate-xml
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         parameters:
           - name: input_xml_key
@@ -101,7 +114,18 @@ spec:
           mkdir -p /work
           KEY="{{inputs.parameters.input_xml_key}}"
           SIM="{{inputs.parameters.simulate_missing_input}}"
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           echo "[validate-xml] clé logique S3=${KEY} simulate_missing_input=${SIM}"
+
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[validate-xml][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[validate-xml][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
 
           if [ -z "${KEY}" ]; then
             echo "[validate-xml] ÉCHEC: input_xml_key vide" >&2
@@ -125,6 +149,13 @@ spec:
 
     # 2 — XML → PostScript (document composé, mock)
     - name: xml-to-ps
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         artifacts:
           - name: validated_xml
@@ -138,7 +169,17 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           echo "[xml-to-ps] transformation XML → PostScript (simulation)"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[xml-to-ps][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[xml-to-ps][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           DOC_COUNT=$(grep -c '<document ' /work/validated.xml || true)
           cat > /work/document.ps <<EOF
           %!PS-Adobe-3.0
@@ -154,6 +195,13 @@ spec:
 
     # 3 — Modification du PostScript (mock)
     - name: modify-ps
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         artifacts:
           - name: document_ps
@@ -167,7 +215,17 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           echo "[modify-ps] enrichment / modification PS (simulation)"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[modify-ps][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[modify-ps][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           cp /work/document.ps /work/document_mod.ps
           cat >> /work/document_mod.ps <<'EOF'
           % --- modified ---
@@ -178,6 +236,13 @@ spec:
 
     # 4 — Tri / éclatement → listes JSON pour fan-out (0..N paquets / canal)
     - name: sort-split
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         parameters:
           - name: packet_seed
@@ -203,7 +268,17 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           SEED="{{inputs.parameters.packet_seed}}"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[sort-split][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[sort-split][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           A=$((SEED % 4))
           P=$(( (SEED / 4) % 4 ))
           E=$(( (SEED / 16) % 4 ))
@@ -244,6 +319,13 @@ spec:
 
     # Canal archivage — PS → PDF + XML (mock)
     - name: archive-packet
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         parameters:
           - name: packet
@@ -256,8 +338,18 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           PACKET='{{inputs.parameters.packet}}'
           echo "[archive] paquet=${PACKET}"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[archive][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[archive][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           PID=$(echo "${PACKET}" | sed -n 's/.*"packet_id":"\([^"]*\)".*/\1/p')
           DOCS=$(echo "${PACKET}" | sed -n 's/.*"doc_count":\([0-9]*\).*/\1/p')
           KEY=$(echo "${PACKET}" | sed -n 's/.*"s3_key":"\([^"]*\)".*/\1/p')
@@ -271,6 +363,13 @@ spec:
 
     # Canal impression — enrichissement PS + envoi printer (mock)
     - name: print-packet
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         parameters:
           - name: packet
@@ -283,8 +382,18 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           PACKET='{{inputs.parameters.packet}}'
           echo "[print] paquet=${PACKET}"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[print][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[print][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           PID=$(echo "${PACKET}" | sed -n 's/.*"packet_id":"\([^"]*\)".*/\1/p')
           DOCS=$(echo "${PACKET}" | sed -n 's/.*"doc_count":\([0-9]*\).*/\1/p')
           KEY=$(echo "${PACKET}" | sed -n 's/.*"s3_key":"\([^"]*\)".*/\1/p')
@@ -301,6 +410,13 @@ spec:
 
     # Canal guichet électronique — PS → XML + PDF embed (mock)
     - name: egate-packet
+      retryStrategy:
+        limit: "3"
+        retryPolicy: Always
+        backoff:
+          duration: "2s"
+          factor: 2
+          maxDuration: "1m"
       inputs:
         parameters:
           - name: packet
@@ -313,8 +429,18 @@ spec:
         command: [sh]
         source: |
           set -eu
+          ENABLE="{{workflow.parameters.enable_random_failures}}"
+          RATE="{{workflow.parameters.fail_rate_percent}}"
           PACKET='{{inputs.parameters.packet}}'
           echo "[egate] paquet=${PACKET}"
+          if [ "${ENABLE}" = "true" ]; then
+            ROLL=$((RANDOM % 100))
+            echo "[egate][chaos] roll=${ROLL} fail_if_lt=${RATE}"
+            if [ "${ROLL}" -lt "${RATE}" ]; then
+              echo "[egate][chaos] échec simulé (exit 42)" >&2
+              exit 42
+            fi
+          fi
           PID=$(echo "${PACKET}" | sed -n 's/.*"packet_id":"\([^"]*\)".*/\1/p')
           DOCS=$(echo "${PACKET}" | sed -n 's/.*"doc_count":\([0-9]*\).*/\1/p')
           KEY=$(echo "${PACKET}" | sed -n 's/.*"s3_key":"\([^"]*\)".*/\1/p')
