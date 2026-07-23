@@ -26,8 +26,8 @@ manifests/
 Les workflows qui passent des fichiers entre étapes (ex. `chaine-directe`)
 utilisent le ConfigMap [`manifests/artifact-repositories.yaml`](manifests/artifact-repositories.yaml).
 
-1. Éditer ce ConfigMap : remplacer `REPLACE_BUCKET` et `REPLACE_ENDPOINT`
-   (et `insecure: true/false` selon le TLS de ton MinIO).
+1. Configurer `bucket` et `endpoint` (**hostname seul**, sans `https://`).
+   Pour MinIO en TLS : `insecure: false`. Pour HTTP : `insecure: true`.
 2. Créer le Secret credentials **hors git** :
 
 ```bash

@@ -1,5 +1,5 @@
 # Artifact repository MinIO/S3 for Workflows in this namespace.
-# Remplacer REPLACE_* puis créer le Secret credentials (voir README).
+# endpoint = hostname only (sans https://) ; insecure=false pour TLS.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,8 +11,8 @@ data:
   default-v1: |
     s3:
       bucket: argo-workflows
-      endpoint: https://minios3.alexetnico.com
-      insecure: true
+      endpoint: minios3.alexetnico.com
+      insecure: false
       accessKeySecret:
         name: minio-artifacts
         key: accessKey
